@@ -914,37 +914,39 @@ class Database:
         if transfer_data.amount <= 0:
             raise ValueError("Transfer amount must be positive")
         
-        # Create the transfer record
-        transfer_query = """
-            INSERT INTO transfers (sender_username, recipient_username, home_id, amount, description, date_created)
-            VALUES (:sender_username, :recipient_username, :home_id, :amount, :description, :date_created)
-            RETURNING id, sender_username, recipient_username, home_id, amount, description, date_created
-        """
-        transfer_values = {
-            "sender_username": sender_username,
-            "recipient_username": transfer_data.recipient_username,
-            "home_id": int(sender.home_id),
-            "amount": transfer_data.amount,
-            "description": transfer_data.description or "Fund transfer to balance contributions",
-            "date_created": datetime.utcnow()
-        }
-        
-        result = await db.fetch_one(transfer_query, transfer_values)
-        
-        # Create contribution adjustments
-        # Add contribution for sender (giver)
-        await self.create_contribution(sender_username, {
-            "product_name": f"Fund transfer to {recipient.full_name}",
-            "amount": transfer_data.amount,
-            "description": f"Transfer to {recipient.full_name}: {transfer_data.description or 'Balancing household contributions'}"
-        })
-        
-        # Subtract contribution for recipient (receiver) by creating a negative contribution
-        await self.create_contribution(transfer_data.recipient_username, {
-            "product_name": f"Fund received from {sender.full_name}",
-            "amount": -transfer_data.amount,
-            "description": f"Received from {sender.full_name}: {transfer_data.description or 'Balancing household contributions'}"
-        })
+        # Use transaction to ensure all operations succeed or fail together
+        async with db.transaction():
+            # Create the transfer record
+            transfer_query = """
+                INSERT INTO transfers (sender_username, recipient_username, home_id, amount, description, date_created)
+                VALUES (:sender_username, :recipient_username, :home_id, :amount, :description, :date_created)
+                RETURNING id, sender_username, recipient_username, home_id, amount, description, date_created
+            """
+            transfer_values = {
+                "sender_username": sender_username,
+                "recipient_username": transfer_data.recipient_username,
+                "home_id": int(sender.home_id),
+                "amount": transfer_data.amount,
+                "description": transfer_data.description or "Fund transfer to balance contributions",
+                "date_created": datetime.utcnow()
+            }
+            
+            result = await db.fetch_one(transfer_query, transfer_values)
+            
+            # Create contribution adjustments
+            # Add contribution for sender (giver)
+            await self.create_contribution(sender_username, {
+                "product_name": f"Fund transfer to {recipient.full_name}",
+                "amount": transfer_data.amount,
+                "description": f"Transfer to {recipient.full_name}: {transfer_data.description or 'Balancing household contributions'}"
+            })
+            
+            # Subtract contribution for recipient (receiver) by creating a negative contribution
+            await self.create_contribution(transfer_data.recipient_username, {
+                "product_name": f"Fund received from {sender.full_name}",
+                "amount": -transfer_data.amount,
+                "description": f"Received from {sender.full_name}: {transfer_data.description or 'Balancing household contributions'}"
+            })
         
         return Transfer(
             id=str(result["id"]),

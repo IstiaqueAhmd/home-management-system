@@ -566,13 +566,17 @@ async def create_transfer(
             token = token[7:]
         user = await get_current_user(token)
         
+        logger.info(f"Transfer request: {user.username} -> {recipient_username}, amount: {amount}")
+        
         # Check if user belongs to a home
         user_home = await db.get_user_home(user.username)
         if not user_home:
+            logger.warning(f"Transfer failed: User {user.username} not in a home")
             return RedirectResponse(url="/transfers?error=Please create or join a home to transfer money", status_code=303)
         
         # Validate amount
         if amount <= 0:
+            logger.warning(f"Transfer failed: Invalid amount {amount}")
             return RedirectResponse(url="/transfers?error=Transfer amount must be positive", status_code=303)
         
         transfer_data = TransferCreate(
@@ -582,12 +586,20 @@ async def create_transfer(
         )
         
         try:
-            await db.create_transfer(user.username, transfer_data)
+            result = await db.create_transfer(user.username, transfer_data)
+            logger.info(f"Transfer successful: {user.username} -> {recipient_username}, amount: {amount}, transfer_id: {result.id}")
             return RedirectResponse(url="/transfers?message=Fund transfer completed successfully - contributions adjusted", status_code=303)
         except ValueError as e:
+            logger.warning(f"Transfer validation error for {user.username}: {str(e)}")
             return RedirectResponse(url=f"/transfers?error={str(e)}", status_code=303)
+        except Exception as e:
+            # Log the actual error for debugging
+            logger.error(f"Transfer error for {user.username}: {str(e)}", exc_info=True)
+            return RedirectResponse(url=f"/transfers?error=Transfer failed: {str(e)}", status_code=303)
         
-    except:
+    except Exception as e:
+        # Log authentication/token errors
+        logger.error(f"Authentication error in transfer: {str(e)}", exc_info=True)
         return RedirectResponse(url="/login")
 
 @app.get("/home", response_class=HTMLResponse)
