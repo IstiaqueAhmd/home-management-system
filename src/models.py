@@ -41,10 +41,23 @@ class UserInDB(User):
 
 class Token(BaseModel):
     access_token: str
-    token_type: str
+    refresh_token: Optional[str] = None
+    token_type: str = "bearer"
+    expires_in: Optional[int] = None
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+    scopes: List[str] = []
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 class ContributionCreate(BaseModel):
     product_name: str
