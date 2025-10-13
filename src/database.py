@@ -619,18 +619,6 @@ class Database:
         
         return result > 0
 
-    async def update_user_password(self, username: str, hashed_password: str) -> bool:
-        """Update user's password"""
-        db = await self.get_database()
-        
-        query = "UPDATE users SET hashed_password = :hashed_password WHERE username = :username"
-        result = await db.execute(query, {
-            "hashed_password": hashed_password,
-            "username": username
-        })
-        
-        return result > 0
-
     async def get_monthly_contributions(self, year: int = None, month: int = None) -> List[dict]:
         """Get contributions filtered by month and year"""
         db = await self.get_database()
