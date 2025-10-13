@@ -1,11 +1,9 @@
-from fastapi import FastAPI, Request, Depends, HTTPException, status, Form, Cookie
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import FastAPI, Request, Depends, HTTPException, status, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from datetime import datetime, timedelta
 from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
@@ -13,12 +11,8 @@ import os
 import logging
 from dotenv import load_dotenv
 from database import Database
-from models import (
-    User, UserCreate, UserInDB, Token, Contribution, Transfer, TransferCreate, 
-    Home, HomeCreate, RefreshTokenRequest, PasswordChangeRequest
-)
+from models import User, UserCreate, UserInDB, Token, Contribution, Transfer, TransferCreate, Home, HomeCreate
 from auth import AuthManager
-from jose import JWTError
 
 # Load environment variables
 load_dotenv()
@@ -67,28 +61,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="House Finance Tracker", 
     description="Track house contributions and expenses",
-    lifespan=lifespan,
-    docs_url="/docs" if os.getenv("ENVIRONMENT") != "production" else None,
-    redoc_url="/redoc" if os.getenv("ENVIRONMENT") != "production" else None,
+    lifespan=lifespan
 )
 
-# Security middleware
-app.add_middleware(GZipMiddleware, minimum_size=1000)
-
-# Trusted host middleware for production
-if os.getenv("ENVIRONMENT") == "production":
-    allowed_hosts = os.getenv("ALLOWED_HOSTS", "localhost").split(",")
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
-
-# CORS middleware with enhanced security
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"],  # Allows all origins
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"],
-    expose_headers=["*"]
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
 )
 
 # Mount static files - use relative path for Vercel
@@ -102,87 +84,25 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates_dir = os.path.join(project_root, "templates")
 templates = Jinja2Templates(directory=templates_dir)
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
-security = HTTPBearer(auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Get current user from JWT token"""
+async def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
-    if not credentials:
-        raise credentials_exception
-    
-    token = credentials.credentials
     try:
         payload = auth_manager.verify_token(token)
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-    
-    user = await db.get_user(username)
-    if user is None:
-        raise credentials_exception
-    return user
-
-async def get_current_user_from_cookie(request: Request):
-    """Get current user from cookie token"""
-    token = request.cookies.get("access_token")
-    if not token:
-        return None
-    
-    # Remove 'Bearer ' prefix if present
-    if token.startswith("Bearer "):
-        token = token[7:]
-    
-    try:
-        payload = auth_manager.verify_token(token)
-        username: str = payload.get("sub")
-        if username is None:
-            return None
-        
         user = await db.get_user(username)
+        if user is None:
+            raise credentials_exception
         return user
-    except JWTError:
-        return None
-
-async def require_auth_cookie(request: Request):
-    """Require authentication via cookie, redirect to login if not authenticated"""
-    user = await get_current_user_from_cookie(request)
-    if not user:
-        return None
-    return user
-
-async def get_current_active_user(current_user: User = Depends(get_current_user)):
-    """Get current active user"""
-    if not current_user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
-    return current_user
-
-def create_secure_cookie_response(response: RedirectResponse, token: str, token_type: str = "access"):
-    """Create secure cookie with proper settings"""
-    secure = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
-    httponly = os.getenv("SESSION_COOKIE_HTTPONLY", "true").lower() == "true"
-    samesite = os.getenv("SESSION_COOKIE_SAMESITE", "strict")
-    
-    max_age = 30 * 60  # 30 minutes for access token
-    if token_type == "refresh":
-        max_age = 7 * 24 * 60 * 60  # 7 days for refresh token
-    
-    response.set_cookie(
-        key=f"{token_type}_token",
-        value=f"Bearer {token}",
-        max_age=max_age,
-        httponly=httponly,
-        secure=secure,
-        samesite=samesite
-    )
-    return response
+    except:
+        raise credentials_exception
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -268,7 +188,6 @@ async def register(
 
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """OAuth2 compatible token endpoint"""
     user = await db.authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -276,48 +195,11 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
     access_token_expires = timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30)))
     access_token = auth_manager.create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
-    
-    refresh_token = auth_manager.create_refresh_token(
-        data={"sub": user.username}
-    )
-    
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "expires_in": int(access_token_expires.total_seconds())
-    }
-
-@app.post("/refresh", response_model=Token)
-async def refresh_token(request: RefreshTokenRequest):
-    """Refresh access token using refresh token"""
-    try:
-        new_access_token = auth_manager.refresh_access_token(request.refresh_token)
-        access_token_expires = timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30)))
-        
-        return {
-            "access_token": new_access_token,
-            "token_type": "bearer",
-            "expires_in": int(access_token_expires.total_seconds())
-        }
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-@app.post("/logout")
-async def logout_api(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """API logout endpoint"""
-    if credentials:
-        auth_manager.revoke_token(credentials.credentials)
-    return {"message": "Successfully logged out"}
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/login")
 async def login(
@@ -336,14 +218,8 @@ async def login(
             data={"sub": user.username}, expires_delta=access_token_expires
         )
         
-        refresh_token = auth_manager.create_refresh_token(
-            data={"sub": user.username}
-        )
-        
         response = RedirectResponse(url="/dashboard", status_code=303)
-        response = create_secure_cookie_response(response, access_token, "access")
-        response = create_secure_cookie_response(response, refresh_token, "refresh")
-        
+        response.set_cookie(key="access_token", value=f"Bearer {access_token}", httponly=True)
         logger.info(f"Login successful for username: {username}")
         return response
     except Exception as e:
@@ -352,11 +228,16 @@ async def login(
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_authenticated(request: Request):
-    user = await get_current_user_from_cookie(request)
-    if not user:
+    token = request.cookies.get("access_token")
+    if not token:
         return RedirectResponse(url="/login")
     
     try:
+        # Remove 'Bearer ' prefix if present
+        if token.startswith("Bearer "):
+            token = token[7:]
+        user = await get_current_user(token)
+        
         # Get user's home (optional)
         user_home = await db.get_user_home(user.username)
         
@@ -386,24 +267,13 @@ async def dashboard_authenticated(request: Request):
             "current_month_name": datetime.now().strftime("%B") if user_home else None,
             "contribution_to_average": contribution_to_average
         })
-    except Exception as e:
-        logger.error(f"Dashboard error for {user.username}: {str(e)}", exc_info=True)
+    except:
         return RedirectResponse(url="/login")
 
 @app.post("/logout")
-async def logout(request: Request):
-    # Revoke tokens if present
-    access_token = request.cookies.get("access_token")
-    refresh_token = request.cookies.get("refresh_token")
-    
-    if access_token and access_token.startswith("Bearer "):
-        auth_manager.revoke_token(access_token[7:])
-    if refresh_token and refresh_token.startswith("Bearer "):
-        auth_manager.revoke_token(refresh_token[7:])
-    
+async def logout():
     response = RedirectResponse(url="/login", status_code=303)
     response.delete_cookie(key="access_token")
-    response.delete_cookie(key="refresh_token")
     return response
 
 @app.post("/add-contribution")
@@ -413,11 +283,16 @@ async def add_contribution(
     amount: float = Form(...),
     description: str = Form("")
 ):
-    user = await require_auth_cookie(request)
-    if not user:
+    token = request.cookies.get("access_token")
+    if not token:
         return RedirectResponse(url="/login")
     
     try:
+        # Remove 'Bearer ' prefix if present
+        if token.startswith("Bearer "):
+            token = token[7:]
+        user = await get_current_user(token)
+        
         # Check if user belongs to a home
         user_home = await db.get_user_home(user.username)
         if not user_home:
@@ -433,9 +308,8 @@ async def add_contribution(
         return RedirectResponse(url="/dashboard", status_code=303)
     except ValueError as e:
         return RedirectResponse(url=f"/dashboard?error={str(e)}", status_code=303)
-    except Exception as e:
-        logger.error(f"Add contribution error for {user.username}: {str(e)}", exc_info=True)
-        return RedirectResponse(url="/dashboard?error=Failed to add contribution", status_code=303)
+    except:
+        return RedirectResponse(url="/login")
 
 @app.get("/all-contributions", response_class=HTMLResponse)
 async def all_contributions(request: Request):
@@ -501,59 +375,6 @@ async def analytics(request: Request):
         })
     except:
         return RedirectResponse(url="/dashboard?error=Please create or join a home to view analytics", status_code=303)
-
-@app.post("/change-password")
-async def change_password(
-    request: PasswordChangeRequest,
-    current_user: User = Depends(get_current_active_user)
-):
-    """Change user password"""
-    try:
-        # Verify current password
-        user_in_db = await db.get_user(current_user.username)
-        if not auth_manager.verify_password(request.current_password, user_in_db.hashed_password):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Incorrect current password"
-            )
-        
-        # Validate new password strength
-        if not auth_manager.validate_password_strength(request.new_password):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password must be at least 8 characters and contain uppercase, lowercase, digit, and special character"
-            )
-        
-        # Update password
-        new_hashed_password = auth_manager.get_password_hash(request.new_password)
-        await db.update_user_password(current_user.username, new_hashed_password)
-        
-        return {"message": "Password changed successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Password change error for {current_user.username}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to change password"
-        )
-
-@app.get("/me", response_model=User)
-async def read_users_me(current_user: User = Depends(get_current_active_user)):
-    """Get current user information"""
-    return current_user
-
-@app.get("/token-info")
-async def get_token_info(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Get information about the current token"""
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token required"
-        )
-    
-    token_info = auth_manager.get_token_info(credentials.credentials)
-    return token_info
 
 @app.post("/delete-contribution/{contribution_id}")
 async def delete_contribution(request: Request, contribution_id: str):
@@ -683,9 +504,16 @@ async def transfers_page(request: Request):
         if token.startswith("Bearer "):
             token = token[7:]
         user = await get_current_user(token)
+        logger.info(f"User authenticated: {user.username}")
         
         # Check if user belongs to a home
-        user_home = await db.get_user_home(user.username)
+        try:
+            user_home = await db.get_user_home(user.username)
+            logger.info(f"User home: {user_home.name if user_home else 'None'}")
+        except Exception as e:
+            logger.error(f"Error getting user home: {str(e)}")
+            user_home = None
+            
         if not user_home:
             return templates.TemplateResponse("transfers.html", {
                 "request": request,
@@ -700,13 +528,34 @@ async def transfers_page(request: Request):
             })
         
         # Get user's transfers
-        transfers = await db.get_user_transfers(user.username)
+        try:
+            transfers = await db.get_user_transfers(user.username)
+            logger.info(f"Transfers retrieved: {len(transfers.get('sent', []))} sent, {len(transfers.get('received', []))} received")
+        except Exception as e:
+            logger.error(f"Error getting user transfers: {str(e)}")
+            transfers = {"sent": [], "received": []}
         
         # Get user's current balance (total contributions)
-        balance = await db.get_user_balance(user.username)
+        try:
+            balance = await db.get_user_balance(user.username)
+            logger.info(f"User balance: {balance}")
+        except Exception as e:
+            logger.error(f"Error getting user balance: {str(e)}")
+            balance = 0
         
         # Get user's contribution statistics for display
-        contribution_stats = await db.get_contribution_to_average(user.username)
+        try:
+            contribution_stats = await db.get_contribution_to_average(user.username)
+            logger.info(f"Contribution stats retrieved: {contribution_stats}")
+        except Exception as e:
+            logger.error(f"Error getting contribution stats: {str(e)}")
+            contribution_stats = {
+                "user_total": 0,
+                "average_contribution": 0,
+                "amount_to_reach_average": 0,
+                "is_above_average": False,
+                "home_members_count": 0
+            }
         
         # Anyone in a home can make transfers to other home members
         can_transfer = user_home is not None
@@ -714,7 +563,12 @@ async def transfers_page(request: Request):
         # Get eligible recipients (all home members except sender)
         eligible_recipients = []
         if can_transfer:
-            eligible_recipients = await db.get_eligible_transfer_recipients(user.username)
+            try:
+                eligible_recipients = await db.get_eligible_transfer_recipients(user.username)
+                logger.info(f"Eligible recipients: {len(eligible_recipients)}")
+            except Exception as e:
+                logger.error(f"Error getting eligible recipients: {str(e)}")
+                eligible_recipients = []
         
         return templates.TemplateResponse("transfers.html", {
             "request": request,
@@ -726,7 +580,8 @@ async def transfers_page(request: Request):
             "contribution_stats": contribution_stats,
             "can_transfer": can_transfer
         })
-    except:
+    except Exception as e:
+        logger.error(f"Error in transfers page for user {user.username if 'user' in locals() else 'unknown'}: {str(e)}", exc_info=True)
         return RedirectResponse(url="/login")
 
 @app.post("/transfer")
