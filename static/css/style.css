@@ -3,18 +3,18 @@
 
 :root {
     /* Bold Neubrutalism Colors */
-    --primary: #FFD700;
-    --primary-dark: #FFC700;
-    --primary-light: #FFF9E6;
-    --secondary: #FF6B9D;
-    --success: #06FFA5;
-    --success-light: #D4FFE8;
-    --danger: #FF3366;
-    --danger-light: #FFE5ED;
-    --warning: #FF9F1C;
-    --warning-light: #FFEFD5;
-    --info: #00D9FF;
-    --info-light: #CCFAFF;
+    --primary: #DC143C;
+    --primary-dark: #B22222;
+    --primary-light: #FFE4E1;
+    --secondary: #CD5C5C;
+    --success: #A9A9A9;
+    --success-light: #E8E8E8;
+    --danger: #8B0000;
+    --danger-light: #FFE4E1;
+    --warning: #FF6347;
+    --warning-light: #FFE4E1;
+    --info: #D3D3D3;
+    --info-light: #F5F5F5;
     --dark: #000000;
     --light: #FFFFFF;
     
