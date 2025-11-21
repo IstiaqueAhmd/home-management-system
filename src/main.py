@@ -790,7 +790,7 @@ async def request_join_home(
 async def approve_join_request(
     request: Request,
     request_id: str = Form(...),
-    action: str = Form(...)  # "approve" or "reject"
+    action: str = Form(...)  
 ):
     token = request.cookies.get("access_token")
     if not token:
@@ -819,5 +819,5 @@ async def approve_join_request(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
